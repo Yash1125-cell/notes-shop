@@ -52,13 +52,15 @@ OUT_DIR.mkdir(exist_ok=True)
 
 # Map Razorpay Payment Link / Order "notes" field (product_id you set at
 # checkout) to the actual master PDF file. Adjust to match your products.
-PRODUCT_FILES = {
-    "management-notes": NOTES_DIR / "management-notes.pdf",
-    "commerce-notes": NOTES_DIR / "commerce-notes.pdf",
-    "accounting-notes": NOTES_DIR / "accounting-notes.pdf",
-    # Add a new line here whenever you add a new PDF, like:
-    # "your-new-subject": NOTES_DIR / "your-new-subject.pdf",
-}
+# No fixed list needed! Whatever "product_id" you put in the Razorpay
+# Payment Link note must exactly match a PDF filename (without .pdf) inside
+# the notes/ folder. Example: product_id "economics-notes" -> looks for
+# notes/economics-notes.pdf automatically. Just drop in a new PDF anytime,
+# no code changes required.
+def get_product_file(product_id):
+    safe_id = "".join(c for c in product_id if c.isalnum() or c in "-_")
+    candidate = NOTES_DIR / f"{safe_id}.pdf"
+    return candidate if candidate.exists() else None
 
 
 def verify_signature(payload_body: bytes, received_signature: str) -> bool:
@@ -67,6 +69,12 @@ def verify_signature(payload_body: bytes, received_signature: str) -> bool:
         msg=payload_body,
         digestmod=hashlib.sha256,
     ).hexdigest()
+
+    # TEMPORARY DEBUG LOGGING - remove once webhook works reliably
+    print(f"[DEBUG] WEBHOOK_SECRET length={len(WEBHOOK_SECRET)} repr={WEBHOOK_SECRET!r}")
+    print(f"[DEBUG] received_signature={received_signature!r}")
+    print(f"[DEBUG] expected_signature={expected!r}")
+
     return hmac.compare_digest(expected, received_signature)
 
 
@@ -123,8 +131,8 @@ def razorpay_webhook():
     if not buyer_email or not product_id:
         return jsonify({"error": "missing email or product_id in payment notes"}), 400
 
-    master_file = PRODUCT_FILES.get(product_id)
-    if not master_file or not master_file.exists():
+    master_file = get_product_file(product_id)
+    if not master_file:
         return jsonify({"error": f"unknown product_id: {product_id}"}), 400
 
     safe_email = buyer_email.replace("@", "_at_").replace(".", "_")
