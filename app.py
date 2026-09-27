@@ -128,11 +128,18 @@ def razorpay_webhook():
     buyer_name = payment_entity.get("notes", {}).get("name") or payment_entity.get("contact", "Customer")
     product_id = payment_entity.get("notes", {}).get("product_id")
 
+    # TEMPORARY DEBUG LOGGING - remove once webhook works reliably
+    print(f"[DEBUG] buyer_email={buyer_email!r}")
+    print(f"[DEBUG] buyer_name={buyer_name!r}")
+    print(f"[DEBUG] notes={payment_entity.get('notes')!r}")
+    print(f"[DEBUG] product_id={product_id!r}")
+
     if not buyer_email or not product_id:
         return jsonify({"error": "missing email or product_id in payment notes"}), 400
 
     master_file = get_product_file(product_id)
     if not master_file:
+        print(f"[DEBUG] files in notes dir: {list(NOTES_DIR.glob('*.pdf'))}")
         return jsonify({"error": f"unknown product_id: {product_id}"}), 400
 
     safe_email = buyer_email.replace("@", "_at_").replace(".", "_")
