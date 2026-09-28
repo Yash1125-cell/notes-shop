@@ -101,8 +101,7 @@ def send_email_with_attachment(to_email, to_name, file_path, product_label):
         filename=os.path.basename(file_path),
     )
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
+    with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=20) as server:
         server.login(SMTP_USER, SMTP_PASS)
         server.send_message(msg)
 
