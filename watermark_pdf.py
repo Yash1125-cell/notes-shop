@@ -70,9 +70,6 @@ def watermark_pdf(input_path, output_path, name, email, seller="Yash Notes"):
         page.merge_page(wm_page)
         writer.add_page(page)
 
-    # Optional: lock down editing (still won't stop screenshots, but adds friction)
-    writer.encrypt(user_password="", owner_password=None, permissions_flag=None)
-
     with open(output_path, "wb") as f:
         writer.write(f)
 
