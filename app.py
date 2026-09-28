@@ -29,8 +29,10 @@ Folder layout expected:
 import os
 import hmac
 import hashlib
-import smtplib
-from email.message import EmailMessage
+import json
+import base64
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -40,10 +42,8 @@ from watermark_pdf import watermark_pdf
 app = Flask(__name__)
 
 WEBHOOK_SECRET = os.environ["RAZORPAY_WEBHOOK_SECRET"]
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ["SMTP_USER"]
-SMTP_PASS = os.environ["SMTP_PASS"]
+BREVO_API_KEY = os.environ["BREVO_API_KEY"]
+SMTP_USER = os.environ["SMTP_USER"]  # your Gmail; must be a verified sender in Brevo
 SELLER_NAME = os.environ.get("SELLER_NAME", "Yash Notes")
 
 NOTES_DIR = Path("notes")
@@ -79,31 +79,40 @@ def verify_signature(payload_body: bytes, received_signature: str) -> bool:
 
 
 def send_email_with_attachment(to_email, to_name, file_path, product_label):
-    msg = EmailMessage()
-    msg["Subject"] = f"Your {product_label} from {SELLER_NAME}"
-    msg["From"] = SMTP_USER
-    msg["To"] = to_email
-    msg.set_content(
-        f"Hi {to_name},\n\n"
-        f"Thanks for your purchase! Your watermarked copy of {product_label} "
-        f"is attached.\n\n"
-        f"Please don't share this file — it's uniquely watermarked with your "
-        f"name and email.\n\n"
-        f"— {SELLER_NAME}"
-    )
-
+    """Sends the email through Brevo's web API (HTTPS), because Render's free
+    plan blocks normal SMTP ports."""
     with open(file_path, "rb") as f:
-        data = f.read()
-    msg.add_attachment(
-        data,
-        maintype="application",
-        subtype="pdf",
-        filename=os.path.basename(file_path),
-    )
+        pdf_b64 = base64.b64encode(f.read()).decode()
 
-    with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=20) as server:
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
+    body = {
+        "sender": {"name": SELLER_NAME, "email": SMTP_USER},
+        "to": [{"email": to_email, "name": to_name}],
+        "subject": f"Your {product_label} from {SELLER_NAME}",
+        "textContent": (
+            f"Hi {to_name},\n\n"
+            f"Thanks for your purchase! Your copy of {product_label} is attached.\n\n"
+            f"Please don't share this file - it is uniquely watermarked with your "
+            f"name and email.\n\n- {SELLER_NAME}"
+        ),
+        "attachment": [{"name": os.path.basename(file_path), "content": pdf_b64}],
+    }
+
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=json.dumps(body).encode(),
+        headers={
+            "api-key": BREVO_API_KEY,
+            "content-type": "application/json",
+            "accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            print(f"[EMAIL] Brevo responded {resp.status}")
+    except urllib.error.HTTPError as e:
+        print(f"[EMAIL] Brevo error {e.code}: {e.read().decode()}")
+        raise
 
 
 @app.route("/razorpay-webhook", methods=["POST"])
