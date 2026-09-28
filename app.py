@@ -137,6 +137,7 @@ def razorpay_webhook():
     product_id = payment_entity.get("notes", {}).get("product_id")
 
     # TEMPORARY DEBUG LOGGING - remove once webhook works reliably
+    print(f"[DEBUG] FULL_PAYLOAD={json.dumps(payload)}")
     print(f"[DEBUG] buyer_email={buyer_email!r}")
     print(f"[DEBUG] buyer_name={buyer_name!r}")
     print(f"[DEBUG] notes={payment_entity.get('notes')!r}")
