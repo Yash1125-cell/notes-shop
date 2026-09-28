@@ -52,15 +52,30 @@ OUT_DIR.mkdir(exist_ok=True)
 
 # Map Razorpay Payment Link / Order "notes" field (product_id you set at
 # checkout) to the actual master PDF file. Adjust to match your products.
-# No fixed list needed! Whatever "product_id" you put in the Razorpay
-# Payment Link note must exactly match a PDF filename (without .pdf) inside
-# the notes/ folder. Example: product_id "economics-notes" -> looks for
-# notes/economics-notes.pdf automatically. Just drop in a new PDF anytime,
-# no code changes required.
+# HOW THE CODE PICKS THE PDF
+# 1) If the payment carries a "product_id" note (Razorpay Payment Links do),
+#    it must match a filename in notes/ (without .pdf).
+# 2) Otherwise (Razorpay Payment Pages do NOT pass notes), it matches the
+#    PRICE PAID to a file named  <anything>__<price in rupees>.pdf
+#    Example: notes/management-notes__199.pdf is sent for a Rs 199 payment.
+#    Every product must have a different price, or the code refuses to send.
 def get_product_file(product_id):
     safe_id = "".join(c for c in product_id if c.isalnum() or c in "-_")
     candidate = NOTES_DIR / f"{safe_id}.pdf"
     return candidate if candidate.exists() else None
+
+
+def get_product_file_by_amount(amount_paise):
+    """Returns (file, error). Matches files ending in __<rupees>.pdf"""
+    if not isinstance(amount_paise, int) or amount_paise % 100 != 0:
+        return None, f"amount {amount_paise} is not a whole number of rupees"
+    rupees = amount_paise // 100
+    matches = sorted(NOTES_DIR.glob(f"*__{rupees}.pdf"))
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, f"no file named *__{rupees}.pdf in notes/"
+    return None, f"{len(matches)} files share the price Rs {rupees}: refusing to guess"
 
 
 def verify_signature(payload_body: bytes, received_signature: str) -> bool:
@@ -69,11 +84,6 @@ def verify_signature(payload_body: bytes, received_signature: str) -> bool:
         msg=payload_body,
         digestmod=hashlib.sha256,
     ).hexdigest()
-
-    # TEMPORARY DEBUG LOGGING - remove once webhook works reliably
-    print(f"[DEBUG] WEBHOOK_SECRET length={len(WEBHOOK_SECRET)} repr={WEBHOOK_SECRET!r}")
-    print(f"[DEBUG] received_signature={received_signature!r}")
-    print(f"[DEBUG] expected_signature={expected!r}")
 
     return hmac.compare_digest(expected, received_signature)
 
@@ -132,24 +142,28 @@ def razorpay_webhook():
 
     payment_entity = payload["payload"]["payment"]["entity"]
 
+    notes = payment_entity.get("notes") or {}
     buyer_email = payment_entity.get("email", "")
-    buyer_name = payment_entity.get("notes", {}).get("name") or payment_entity.get("contact", "Customer")
-    product_id = payment_entity.get("notes", {}).get("product_id")
+    buyer_name = notes.get("name") or payment_entity.get("contact", "Customer")
+    product_id = notes.get("product_id")
 
-    # TEMPORARY DEBUG LOGGING - remove once webhook works reliably
-    print(f"[DEBUG] FULL_PAYLOAD={json.dumps(payload)}")
-    print(f"[DEBUG] buyer_email={buyer_email!r}")
-    print(f"[DEBUG] buyer_name={buyer_name!r}")
-    print(f"[DEBUG] notes={payment_entity.get('notes')!r}")
-    print(f"[DEBUG] product_id={product_id!r}")
+    if not buyer_email or buyer_email.lower() == "void@razorpay.com":
+        print("[WEBHOOK] no real buyer email in payment, skipping")
+        return jsonify({"error": "no real buyer email"}), 400
 
-    if not buyer_email or not product_id:
-        return jsonify({"error": "missing email or product_id in payment notes"}), 400
+    if product_id:
+        master_file = get_product_file(product_id)
+        err = None if master_file else f"unknown product_id: {product_id}"
+    else:
+        master_file, err = get_product_file_by_amount(payment_entity.get("amount"))
+        if master_file:
+            product_id = master_file.stem.split("__")[0]
 
-    master_file = get_product_file(product_id)
     if not master_file:
-        print(f"[DEBUG] files in notes dir: {list(NOTES_DIR.glob('*.pdf'))}")
-        return jsonify({"error": f"unknown product_id: {product_id}"}), 400
+        print(f"[WEBHOOK] cannot pick a PDF: {err}")
+        return jsonify({"error": err}), 400
+
+    print(f"[WEBHOOK] sending {master_file.name} to {buyer_email}")
 
     safe_email = buyer_email.replace("@", "_at_").replace(".", "_")
     output_file = OUT_DIR / f"{product_id}_{safe_email}.pdf"
